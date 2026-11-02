@@ -17,8 +17,10 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
 import com.swiperight.R
 import com.swiperight.predict.SwipeInput
@@ -48,8 +50,11 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
     private lateinit var stripScroll: HorizontalScrollView
     private val letterKeys = ArrayList<Pair<TextView, String>>()
     private var shiftKey: TextView? = null
-    private val keyRows = SwipeLayer(context)
-    private var symbols = false
+    private enum class Mode { LETTERS, SYMBOLS, EMOJI }
+    private var mode = Mode.LETTERS
+    private val symbols get() = mode != Mode.LETTERS
+    private lateinit var traceLabel: TextView
+    private var punctPopup: PopupWindow? = null
     private var lastShiftTap = 0L
 
     var shift: Shift = Shift.OFF
@@ -69,6 +74,8 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
     private val modKeyColor = context.getColor(R.color.key_mod)
     private val textColor = context.getColor(R.color.key_text)
     private val accent = context.getColor(R.color.accent)
+    // Created after the colours above: SwipeLayer's trail paint reads `accent` at construction.
+    private val keyRows = SwipeLayer(context)
 
     init {
         orientation = VERTICAL
@@ -99,7 +106,6 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         stripScroll = HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
             overScrollMode = OVER_SCROLL_NEVER
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(44))
         }
         val row = LinearLayout(context).apply { orientation = HORIZONTAL }
         stripScroll.addView(row, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
@@ -124,23 +130,58 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
             row.addView(tv, LayoutParams(slotWidth, LayoutParams.MATCH_PARENT))
             suggestionViews += tv
         }
-        return stripScroll
+        // Letters traced by an in-progress swipe, shown over the suggestions.
+        traceLabel = TextView(context).apply {
+            gravity = Gravity.CENTER
+            setTextColor(accent)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+            setTypeface(typeface, Typeface.BOLD)
+            letterSpacing = 0.12f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.START
+            setBackgroundColor(context.getColor(R.color.keyboard_bg))
+            visibility = View.GONE
+        }
+        return FrameLayout(context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(44))
+            addView(stripScroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            addView(traceLabel, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+    }
+
+    private fun showTrace(letters: String?) {
+        if (letters == null) {
+            traceLabel.visibility = View.GONE
+        } else {
+            traceLabel.text = if (shift != Shift.OFF) letters.uppercase() else letters
+            traceLabel.visibility = View.VISIBLE
+        }
     }
 
     private fun buildRows() {
         keyRows.removeAllViews()
         letterKeys.clear()
         shiftKey = null
-        if (!symbols) {
-            row(chars("qwertyuiop"))
-            row(chars("asdfghjkl"), sidePad = 0.5f)
-            row(listOf(Key.Shift) + chars("zxcvbnm") + Key.Delete)
-        } else {
-            row(chars("1234567890"))
-            row(chars("@#$%&-+()/"))
-            row(listOf(Key.Text("=", 1f)) + chars("*\"':;!?") + Key.Delete)
+        when (mode) {
+            Mode.LETTERS -> {
+                row(chars("qwertyuiop"))
+                row(chars("asdfghjkl"), sidePad = 0.5f)
+                row(listOf(Key.Shift) + chars("zxcvbnm") + Key.Delete)
+            }
+            Mode.SYMBOLS -> {
+                row(chars("1234567890"))
+                row(chars("@#$%&-+()/"))
+                row(listOf(Key.Text("=", 1f)) + chars("*\"':;!?") + Key.Delete)
+            }
+            Mode.EMOJI -> {
+                keyRows.addView(EmojiPanel(context, dp(KEY_H) * 3) { listener.onText(it) },
+                    LayoutParams(LayoutParams.MATCH_PARENT, dp(KEY_H) * 3))
+                row(listOf(Key.Mode, Key.Text(",", 1f), Key.Space, Key.Text(".", 1f), Key.Delete))
+                refreshLetters()
+                return
+            }
         }
-        row(listOf(Key.Mode, Key.Text(",", 1f), Key.Space, Key.Text(".", 1f), Key.Enter))
+        row(listOf(Key.Mode, Key.Emoji, Key.Text(",", 1f), Key.Space, Key.Text(".", 1f), Key.Enter))
         refreshLetters()
     }
 
@@ -149,7 +190,8 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         object Shift : Key(1.5f)
         object Delete : Key(1.5f)
         object Mode : Key(1.5f)
-        object Space : Key(5f)
+        object Space : Key(4f)
+        object Emoji : Key(1f)
         object Enter : Key(1.5f)
     }
 
@@ -181,6 +223,10 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
             is Key.Text -> {
                 tv.text = k.s
                 if (k.s.length == 1 && k.s[0] in 'a'..'z') letterKeys += tv to k.s
+                if (k.s == "." && mode != Mode.SYMBOLS) {
+                    attachPunctuationPanel(tv)
+                    return frame
+                }
                 tv.setOnClickListener {
                     tap(tv)
                     val out = if (shift != Shift.OFF && k.s[0].isLetter()) k.s.uppercase() else k.s
@@ -226,10 +272,20 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
                 }
             }
             Key.Mode -> {
-                tv.text = if (symbols) "ABC" else "?123"
+                tv.text = if (mode == Mode.LETTERS) "?123" else "ABC"
                 tv.setOnClickListener {
                     tap(tv)
-                    symbols = !symbols
+                    mode = if (mode == Mode.LETTERS) Mode.SYMBOLS else Mode.LETTERS
+                    buildRows()
+                }
+            }
+            Key.Emoji -> {
+                tv.text = "😊"
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+                tv.contentDescription = "Emoji"
+                tv.setOnClickListener {
+                    tap(tv)
+                    mode = Mode.EMOJI
                     buildRows()
                 }
             }
@@ -245,6 +301,105 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
             }
         }
         return frame
+    }
+
+    /**
+     * Period key: tap for ".", hold to open a punctuation panel. While holding,
+     * slide onto a character and release to type it; release elsewhere and
+     * the panel stays open for a tap (touch outside to dismiss).
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun attachPunctuationPanel(key: TextView) {
+        var opened = false
+        var cells: List<TextView> = emptyList()
+        var hot: TextView? = null
+        val open = Runnable {
+            opened = true
+            tap(key)
+            cells = showPunctuationPanel(key)
+        }
+        fun cellAt(rawX: Float, rawY: Float): TextView? = cells.firstOrNull { c ->
+            val loc = IntArray(2).also { c.getLocationOnScreen(it) }
+            rawX >= loc[0] && rawX < loc[0] + c.width && rawY >= loc[1] && rawY < loc[1] + c.height
+        }
+        key.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    opened = false; hot = null
+                    v.isPressed = true
+                    handler.postDelayed(open, ViewConfiguration.getLongPressTimeout().toLong())
+                }
+                MotionEvent.ACTION_MOVE -> if (opened) {
+                    val c = cellAt(e.rawX, e.rawY)
+                    if (c !== hot) {
+                        hot?.isPressed = false
+                        c?.isPressed = true
+                        hot = c
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.isPressed = false
+                    handler.removeCallbacks(open)
+                    if (!opened) {
+                        tap(key); listener.onText(".")
+                    } else {
+                        val c = cellAt(e.rawX, e.rawY)
+                        if (c != null) { listener.onText(c.text.toString()); punctPopup?.dismiss() }
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    handler.removeCallbacks(open)
+                }
+            }
+            true
+        }
+    }
+
+    private fun showPunctuationPanel(anchor: View): List<TextView> {
+        punctPopup?.dismiss()
+        val cellW = dp(42); val cellH = dp(48)
+        val panel = LinearLayout(context).apply {
+            orientation = VERTICAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(modKeyColor)
+            }
+            elevation = dp(6).toFloat()
+        }
+        val cells = ArrayList<TextView>()
+        for (rowChars in PUNCTUATION) {
+            val r = LinearLayout(context).apply { orientation = HORIZONTAL }
+            for (ch in rowChars) {
+                val c = TextView(context).apply {
+                    text = ch
+                    gravity = Gravity.CENTER
+                    setTextColor(textColor)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                    background = ripple(keyColor)
+                    setOnClickListener {
+                        tap(this); listener.onText(ch); punctPopup?.dismiss()
+                    }
+                }
+                r.addView(c, LayoutParams(cellW, cellH).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
+                cells += c
+            }
+            panel.addView(r)
+        }
+        val popup = PopupWindow(panel, LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, false).apply {
+            isOutsideTouchable = true
+            setOnDismissListener { punctPopup = null }
+        }
+        panel.measure(MeasureSpec.UNSPECIFIED, MeasureSpec.UNSPECIFIED)
+        val loc = IntArray(2).also { anchor.getLocationInWindow(it) }
+        val myLoc = IntArray(2).also { getLocationInWindow(it) }
+        // Above the key, right-aligned with it, kept inside the keyboard.
+        val x = (loc[0] + anchor.width - panel.measuredWidth).coerceIn(myLoc[0], myLoc[0] + width - panel.measuredWidth)
+        val y = (loc[1] - panel.measuredHeight - dp(4)).coerceAtLeast(myLoc[1])
+        popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y)
+        punctPopup = popup
+        return cells
     }
 
     private fun refreshLetters() {
@@ -280,6 +435,30 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
             alpha = 170
         }
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+        private val traced = StringBuilder()
+        private var litKey: TextView? = null
+
+        /** Light the key under the finger and extend the traced letters when it changes. */
+        private fun track(x: Float, y: Float) {
+            val hit = letterKeyAt(x, y)
+            if (hit != null && hit.second.isNotEmpty() && (traced.isEmpty() || traced.last() != hit.second[0])) {
+                traced.append(hit.second)
+                showTrace(traced.toString())
+            }
+            val tv = hit?.first
+            if (tv !== litKey) {
+                litKey?.isPressed = false
+                tv?.isPressed = true
+                litKey = tv
+            }
+        }
+
+        private fun endTrace() {
+            litKey?.isPressed = false
+            litKey = null
+            traced.setLength(0)
+            showTrace(null)
+        }
 
         init {
             orientation = VERTICAL
@@ -303,6 +482,8 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
                     val kw = keyWidth()
                     if (hypot(e.x - downX, e.y - downY) > maxOf(touchSlop.toFloat(), kw * SWIPE_START_KEYS)) {
                         swiping = true
+                        traced.setLength(0)
+                        for (i in xs.indices) track(xs[i], ys[i])
                         trail.reset()
                         trail.moveTo(xs[0], ys[0])
                         for (i in 1 until xs.size) trail.lineTo(xs[i], ys[i])
@@ -325,16 +506,19 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
                     }
                     xs += e.x; ys += e.y
                     trail.lineTo(e.x, e.y)
+                    track(e.x, e.y)
                     invalidate()
                 }
                 MotionEvent.ACTION_UP -> {
                     swiping = false
+                    endTrace()
                     trail.reset()
                     invalidate()
                     buildSwipe()?.let { listener.onSwipe(it, startShift) }
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     swiping = false
+                    endTrace()
                     trail.reset()
                     invalidate()
                 }
@@ -367,12 +551,14 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
             return (row.left + frame.left + frame.width / 2f) to (row.top + frame.top + frame.height / 2f)
         }
 
-        private fun letterAt(x: Float, y: Float): String? {
-            for ((tv, s) in letterKeys) {
-                val frame = tv.parent as View
+        private fun letterAt(x: Float, y: Float): String? = letterKeyAt(x, y)?.second
+
+        private fun letterKeyAt(x: Float, y: Float): Pair<TextView, String>? {
+            for (pair in letterKeys) {
+                val frame = pair.first.parent as View
                 val row = frame.parent as View
                 val l = row.left + frame.left; val t = row.top + frame.top
-                if (x >= l && x < l + frame.width && y >= t && y < t + frame.height) return s
+                if (x >= l && x < l + frame.width && y >= t && y < t + frame.height) return pair
             }
             return null
         }
@@ -393,7 +579,14 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    /** Back to letters (e.g. when a new field gets focus). */
+    fun resetMode() {
+        punctPopup?.dismiss()
+        if (mode != Mode.LETTERS) { mode = Mode.LETTERS; buildRows() }
+    }
+
     override fun onDetachedFromWindow() {
+        punctPopup?.dismiss()
         handler.removeCallbacksAndMessages(null)
         super.onDetachedFromWindow()
     }
@@ -404,6 +597,11 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         private const val DOUBLE_TAP_MS = 300L
         private const val REPEAT_DELAY_MS = 400L
         private const val REPEAT_MS = 50L
+        /** Period-key long-press panel. */
+        private val PUNCTUATION = listOf(
+            listOf("!", "?", ",", "'", "\"", ":", ";"),
+            listOf("-", "(", ")", "@", "&", "/", "…"),
+        )
         /** Travel (in key widths) before a touch on a letter becomes a swipe. */
         private const val SWIPE_START_KEYS = 0.6f
     }

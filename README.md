@@ -11,7 +11,17 @@ not request the `INTERNET` permission.
   likely the model thinks that word comes next. Shape-identical words ("to"/"too")
   are decided by context. The swiped word stays editable: tap an alternate to
   replace it, or press backspace to remove it.
+- **Live swipe feedback:** a trail, the key under the finger lit up, and the traced
+  letters shown in the strip while you swipe.
+- **Contractions:** it's, don't, I'm, you're and about 55 others are suggested and
+  swipeable, with or without typing the apostrophe ("dont" → don't, swipe "its" →
+  it's or its depending on context). GPT-2 stores these as two tokens, so they're
+  scored exactly with one extra model pass, and only when they could reach the strip.
 - **"i" → "I"** when typed as a whole word ("i'm" → "I'm"), and in suggestions.
+- **Punctuation panel:** hold the period key, slide to ! ? , ' " : ; - ( ) @ & / …
+  and release, or tap one.
+- **Emoji picker:** the 😊 key opens category tabs, recents and the full Unicode
+  15.1 set (`tools/make_emoji.py`). Emoji the phone's font can't draw are hidden.
 
 ```
 text before cursor ─► ContextBuilder ─► BpeTokenizer ─► TFLite Interpreter ─► WordCandidates ─► top-3 words
@@ -45,6 +55,8 @@ text before cursor ─► ContextBuilder ─► BpeTokenizer ─► TFLite Inter
 | `predict/ContextBuilder.kt` | 32-char window, partial-word prefix, space/newline/punctuation handling, edge cases |
 | `predict/WordCandidates.kt` | Logits → whole-word suggestions |
 | `predict/SwipeDecoder.kt` | Gesture decoding: path shape × language-model prior |
+| `predict/Contractions.kt`, `SuggestionRanker.kt` | Two-token contractions, merged ranking with one optional extra pass |
+| `ime/EmojiPanel.kt` | Emoji picker (`assets/emoji.txt` from `tools/make_emoji.py`) |
 | `ime/SwipeRightIme.kt`, `ime/KeyboardView.kt` | The keyboard: threading, commit logic, privacy, memory release |
 | `ui/MainActivity.kt` | Setup + on-device benchmark |
 | `tools/build_model.sh` | Rebuilds all model assets from the Hugging Face checkpoint |

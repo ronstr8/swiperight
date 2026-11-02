@@ -72,6 +72,7 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
         swipeEnabled = allowsSwipe(info) && !isLowRam()
         lastCommitWasSuggestion = false
         composingSwipe = false
+        if (!restarting) keyboard?.resetMode()
         keyboard?.enterLabel = enterLabelFor(info)
         keyboard?.setSuggestions(emptyList())
         updateAutoShift()
