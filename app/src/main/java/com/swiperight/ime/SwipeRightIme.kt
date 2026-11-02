@@ -15,6 +15,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import com.swiperight.predict.ContextBuilder
 import com.swiperight.predict.Predictor
+import com.swiperight.predict.SwipeInput
 
 /**
  * The keyboard. Prediction work happens on one background thread that owns
@@ -46,7 +47,13 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
     @Volatile private var generation = 0L
     private var keyboard: KeyboardView? = null
     private var predictionsEnabled = false
+    private var swipeEnabled = false
     private var lastCommitWasSuggestion = false
+
+    /** A swiped word is in the editor's composing region; alternates are on the strip. */
+    private var composingSwipe = false
+    /** Bumped on every key and swipe; a swipe result is applied only if nothing happened since. */
+    private var inputSerial = 0L
 
     private val releaseRunnable = Runnable { worker.post { releasePredictor("idle") } }
 
@@ -62,11 +69,13 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
         super.onStartInputView(info, restarting)
         main.removeCallbacks(releaseRunnable)
         predictionsEnabled = wantsPredictions(info) && !isLowRam()
+        swipeEnabled = allowsSwipe(info) && !isLowRam()
         lastCommitWasSuggestion = false
+        composingSwipe = false
         keyboard?.enterLabel = enterLabelFor(info)
         keyboard?.setSuggestions(emptyList())
         updateAutoShift()
-        if (predictionsEnabled) {
+        if (predictionsEnabled || swipeEnabled) {
             worker.post { ensurePredictor() } // warm up while the user starts typing
             requestPrediction()
         }
@@ -85,6 +94,11 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         updateAutoShift()
+        if (composingSwipe) {
+            // Keep showing swipe alternates while the swiped word is still composing.
+            if (candidatesStart >= 0 && newSelStart == candidatesEnd) return
+            composingSwipe = false // the editor or the user moved on
+        }
         if (newSelStart == newSelEnd) requestPrediction() else keyboard?.setSuggestions(emptyList())
     }
 
@@ -92,6 +106,20 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onText(text: String) {
         val ic = currentInputConnection ?: return
+        inputSerial++
+        if (composingSwipe) {
+            // Accept the swiped word. A letter starts a new word, so it gets a space.
+            ic.finishComposingText()
+            composingSwipe = false
+            when {
+                text[0].isLetterOrDigit() -> ic.commitText(" $text", 1)
+                text.length == 1 && text[0] in ".,!?;:" -> ic.commitText("$text ", 1)
+                else -> ic.commitText(text, 1)
+            }
+            lastCommitWasSuggestion = false
+            return
+        }
+        if (text.length == 1 && text[0] in I_TERMINATORS) capitalizeStandaloneI(ic)
         if (lastCommitWasSuggestion && text.length == 1 && text[0] in ".,!?;:") {
             // "word |" + "." -> "word. |": swap the auto-inserted space.
             if (ic.getTextBeforeCursor(1, 0) == " ") ic.deleteSurroundingText(1, 0)
@@ -104,7 +132,14 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onBackspace() {
         val ic = currentInputConnection ?: return
+        inputSerial++
         lastCommitWasSuggestion = false
+        if (composingSwipe) {
+            // Backspace right after a swipe removes the whole swiped word.
+            ic.commitText("", 1)
+            composingSwipe = false
+            return
+        }
         val sel = ic.getSelectedText(0)
         if (!sel.isNullOrEmpty()) ic.commitText("", 1)
         else sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL) // editor handles surrogates/graphemes
@@ -112,7 +147,14 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onEnter() {
         val ic = currentInputConnection ?: return
+        inputSerial++
         lastCommitWasSuggestion = false
+        if (composingSwipe) {
+            ic.finishComposingText()
+            composingSwipe = false
+        } else {
+            capitalizeStandaloneI(ic)
+        }
         val info = currentInputEditorInfo
         val action = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
         val noEnterAction = (info?.imeOptions ?: 0) and EditorInfo.IME_FLAG_NO_ENTER_ACTION != 0
@@ -126,6 +168,18 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onSuggestion(word: String) {
         val ic = currentInputConnection ?: return
+        inputSerial++
+        if (composingSwipe) {
+            // Tapped a swipe alternate: it replaces the swiped word.
+            ic.beginBatchEdit()
+            ic.setComposingText(word, 1)
+            ic.finishComposingText()
+            ic.commitText(" ", 1)
+            ic.endBatchEdit()
+            composingSwipe = false
+            lastCommitWasSuggestion = true
+            return
+        }
         // Re-derive the slot from the *current* text: the user may have typed
         // more since these suggestions were computed.
         val before = ic.getTextBeforeCursor(CONTEXT_CHARS, 0) ?: ""
@@ -135,6 +189,40 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
         ic.commitText((if (ctx.insertSpace) " " else "") + word + " ", 1)
         ic.endBatchEdit()
         lastCommitWasSuggestion = true
+    }
+
+    override fun onSwipe(swipe: SwipeInput, shift: KeyboardView.Shift) {
+        if (!swipeEnabled) return
+        val ic = currentInputConnection ?: return
+        if (composingSwipe) {
+            ic.finishComposingText() // the previous swiped word is accepted as is
+            composingSwipe = false
+        }
+        lastCommitWasSuggestion = false
+        val serial = ++inputSerial
+        val text = ic.getTextBeforeCursor(CONTEXT_CHARS, 0)?.toString() ?: ""
+        generation++ // drop any pending suggestion result
+        worker.post {
+            val p = ensurePredictor() ?: return@post
+            val result = try {
+                p.decodeSwipe(text, swipe, KeyboardView.MAX_SUGGESTIONS)
+            } catch (e: Exception) {
+                Log.e(TAG, "swipe decode failed", e)
+                return@post
+            }
+            main.post {
+                if (serial != inputSerial || result.words.isEmpty()) return@post
+                val conn = currentInputConnection ?: return@post
+                val words = result.words.map { applyShift(it, shift) }
+                generation++
+                conn.beginBatchEdit()
+                if (result.context.insertSpace) conn.commitText(" ", 1)
+                conn.setComposingText(words[0], 1)
+                conn.endBatchEdit()
+                composingSwipe = true
+                keyboard?.setSuggestions(words)
+            }
+        }
     }
 
     // ---- prediction ------------------------------------------------------------
@@ -148,7 +236,7 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
             if (gen != generation) return@post // superseded by a newer keystroke
             val p = ensurePredictor() ?: return@post
             val result = try {
-                p.predict(text)
+                p.predict(text, KeyboardView.MAX_SUGGESTIONS)
             } catch (e: Exception) {
                 Log.e(TAG, "prediction failed", e)
                 return@post
@@ -211,6 +299,24 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
         kb.shift = if (caps) KeyboardView.Shift.ONCE else KeyboardView.Shift.OFF
     }
 
+    /** "i" typed as a whole word becomes "I" once the word ends (space, punctuation, enter). */
+    private fun capitalizeStandaloneI(ic: android.view.inputmethod.InputConnection) {
+        val before = ic.getTextBeforeCursor(2, 0)?.toString() ?: return
+        val standalone = before == "i" ||
+            (before.length == 2 && before[1] == 'i' && (before[0].isWhitespace() || before[0] in "(\"“‘[{"))
+        if (!standalone) return
+        ic.beginBatchEdit()
+        ic.deleteSurroundingText(1, 0)
+        ic.commitText("I", 1)
+        ic.endBatchEdit()
+    }
+
+    private fun applyShift(w: String, shift: KeyboardView.Shift): String = when (shift) {
+        KeyboardView.Shift.OFF -> w
+        KeyboardView.Shift.ONCE -> w.replaceFirstChar { it.titlecase() }
+        KeyboardView.Shift.LOCKED -> w.uppercase()
+    }
+
     private fun isLowRam(): Boolean =
         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).isLowRamDevice
 
@@ -219,6 +325,19 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
         /** Read a bit more than the model window so ContextBuilder can tell a cut from the start. */
         private const val CONTEXT_CHARS = ContextBuilder.WINDOW_CHARS * 2
         private const val IDLE_RELEASE_MS = 5 * 60 * 1000L
+
+        /** Characters that end a word and trigger "i" -> "I". */
+        private const val I_TERMINATORS = " .,!?;:'’)\n"
+
+        /** Swipe needs letters: any text field except passwords. */
+        fun allowsSwipe(info: EditorInfo): Boolean {
+            val type = info.inputType
+            if (type and InputType.TYPE_MASK_CLASS != InputType.TYPE_CLASS_TEXT) return false
+            val v = type and InputType.TYPE_MASK_VARIATION
+            return v != InputType.TYPE_TEXT_VARIATION_PASSWORD &&
+                v != InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD &&
+                v != InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+        }
 
         fun wantsPredictions(info: EditorInfo): Boolean {
             val type = info.inputType

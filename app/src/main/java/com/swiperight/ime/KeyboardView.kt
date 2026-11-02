@@ -2,10 +2,13 @@ package com.swiperight.ime
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
-import android.content.res.ColorStateList
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -13,14 +16,18 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.swiperight.R
+import com.swiperight.predict.SwipeInput
+import kotlin.math.hypot
 
 /**
- * A plain QWERTY + symbols keyboard with a three-slot suggestion strip, built
- * in code. It has no prediction logic of its own; it only reports keys to
- * [Listener].
+ * QWERTY + symbols keyboard with a horizontally scrolling strip of up to nine
+ * suggestions and gesture (swipe) input over the letter keys. It has no
+ * prediction logic of its own; it only reports to [Listener].
  */
 @SuppressLint("ViewConstructor")
 class KeyboardView(context: Context, private val listener: Listener) : LinearLayout(context) {
@@ -30,15 +37,18 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         fun onBackspace()
         fun onEnter()
         fun onSuggestion(word: String)
+        /** A completed swipe across letter keys; [shift] is the shift state when it started. */
+        fun onSwipe(swipe: SwipeInput, shift: Shift)
     }
 
     enum class Shift { OFF, ONCE, LOCKED }
 
     private val handler = Handler(Looper.getMainLooper())
-    private val suggestionViews = ArrayList<TextView>(3)
+    private val suggestionViews = ArrayList<TextView>(MAX_SUGGESTIONS)
+    private lateinit var stripScroll: HorizontalScrollView
     private val letterKeys = ArrayList<Pair<TextView, String>>()
     private var shiftKey: TextView? = null
-    private val keyRows = LinearLayout(context).apply { orientation = VERTICAL }
+    private val keyRows = SwipeLayer(context)
     private var symbols = false
     private var lastShiftTap = 0L
 
@@ -50,6 +60,7 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
 
     var enterLabel: String = "⏎"
         set(value) {
+            if (field == value) return
             field = value
             buildRows()
         }
@@ -69,31 +80,40 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         buildRows()
     }
 
-    /** Show up to three words; the middle slot holds the top suggestion. */
+    /**
+     * Shows up to nine words, best first, left to right. Three fill the
+     * visible width; the rest scroll in from the right.
+     */
     fun setSuggestions(words: List<String>) {
-        // Order on screen: [2nd] [1st] [3rd], like most mobile keyboards.
-        val slots = arrayOf(words.getOrNull(1), words.getOrNull(0), words.getOrNull(2))
         for ((i, v) in suggestionViews.withIndex()) {
-            val w = slots[i]
+            val w = words.getOrNull(i)
             v.text = w ?: ""
             v.tag = w
+            v.visibility = if (w != null || i < 3) View.VISIBLE else View.GONE
             v.isEnabled = w != null
         }
+        stripScroll.scrollTo(0, 0)
     }
 
     private fun buildSuggestionStrip(): View {
-        val strip = LinearLayout(context).apply {
-            orientation = HORIZONTAL
+        stripScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = OVER_SCROLL_NEVER
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, dp(44))
         }
-        repeat(3) { i ->
+        val row = LinearLayout(context).apply { orientation = HORIZONTAL }
+        stripScroll.addView(row, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))
+        // A third of the strip's width per slot, so slots 1-3 fill the screen.
+        val slotWidth = (resources.displayMetrics.widthPixels - 2 * dp(4)) / 3
+        repeat(MAX_SUGGESTIONS) { i ->
             val tv = TextView(context).apply {
                 gravity = Gravity.CENTER
                 setTextColor(textColor)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-                if (i == 1) setTypeface(typeface, Typeface.BOLD)
+                if (i == 0) setTypeface(typeface, Typeface.BOLD)
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(6), 0, dp(6), 0)
                 background = ripple(null)
                 setOnClickListener {
                     val w = tag as? String ?: return@setOnClickListener
@@ -101,12 +121,10 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
                     listener.onSuggestion(w)
                 }
             }
-            strip.addView(tv, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+            row.addView(tv, LayoutParams(slotWidth, LayoutParams.MATCH_PARENT))
             suggestionViews += tv
-            if (i < 2) strip.addView(View(context).apply { setBackgroundColor(modKeyColor) },
-                LayoutParams(dp(1), LayoutParams.MATCH_PARENT).apply { setMargins(0, dp(10), 0, dp(10)) })
         }
-        return strip
+        return stripScroll
     }
 
     private fun buildRows() {
@@ -162,7 +180,7 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         when (k) {
             is Key.Text -> {
                 tv.text = k.s
-                if (k.s.length == 1 && k.s[0].isLetter()) letterKeys += tv to k.s
+                if (k.s.length == 1 && k.s[0] in 'a'..'z') letterKeys += tv to k.s
                 tv.setOnClickListener {
                     tap(tv)
                     val out = if (shift != Shift.OFF && k.s[0].isLetter()) k.s.uppercase() else k.s
@@ -185,7 +203,6 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
             }
             Key.Delete -> {
                 tv.text = "⌫"
-                // Hold to repeat.
                 val repeat = object : Runnable {
                     override fun run() {
                         listener.onBackspace()
@@ -239,6 +256,128 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         }
     }
 
+    /**
+     * Holds the key rows. A touch that starts on a letter key and travels more
+     * than [SWIPE_START_KEYS] key widths is taken over from the key (the key
+     * gets ACTION_CANCEL, so no letter is typed). It is then drawn as a trail
+     * and reported as a swipe when the finger lifts. Taps are unaffected.
+     */
+    private inner class SwipeLayer(context: Context) : LinearLayout(context) {
+        private val xs = ArrayList<Float>(256)
+        private val ys = ArrayList<Float>(256)
+        private var downX = 0f
+        private var downY = 0f
+        private var downOnLetter = false
+        private var swiping = false
+        private var startShift = Shift.OFF
+        private val trail = Path()
+        private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accent
+            style = Paint.Style.STROKE
+            strokeWidth = dp(5).toFloat()
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            alpha = 170
+        }
+        private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
+        init {
+            orientation = VERTICAL
+            setWillNotDraw(false)
+        }
+
+        override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.x; downY = e.y
+                    downOnLetter = !symbols && letterAt(e.x, e.y) != null
+                    swiping = false
+                    xs.clear(); ys.clear()
+                    xs += e.x; ys += e.y
+                    startShift = shift
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!downOnLetter || e.pointerCount > 1) return false
+                    for (h in 0 until e.historySize) { xs += e.getHistoricalX(h); ys += e.getHistoricalY(h) }
+                    xs += e.x; ys += e.y
+                    val kw = keyWidth()
+                    if (hypot(e.x - downX, e.y - downY) > maxOf(touchSlop.toFloat(), kw * SWIPE_START_KEYS)) {
+                        swiping = true
+                        trail.reset()
+                        trail.moveTo(xs[0], ys[0])
+                        for (i in 1 until xs.size) trail.lineTo(xs[i], ys[i])
+                        invalidate()
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
+        @SuppressLint("ClickableViewAccessibility")
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            if (!swiping) return false
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> {
+                    for (h in 0 until e.historySize) {
+                        xs += e.getHistoricalX(h); ys += e.getHistoricalY(h)
+                        trail.lineTo(e.getHistoricalX(h), e.getHistoricalY(h))
+                    }
+                    xs += e.x; ys += e.y
+                    trail.lineTo(e.x, e.y)
+                    invalidate()
+                }
+                MotionEvent.ACTION_UP -> {
+                    swiping = false
+                    trail.reset()
+                    invalidate()
+                    buildSwipe()?.let { listener.onSwipe(it, startShift) }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    swiping = false
+                    trail.reset()
+                    invalidate()
+                }
+            }
+            return true
+        }
+
+        override fun dispatchDraw(canvas: Canvas) {
+            super.dispatchDraw(canvas)
+            if (swiping) canvas.drawPath(trail, trailPaint)
+        }
+
+        private fun buildSwipe(): SwipeInput? {
+            if (xs.size < 2 || letterKeys.isEmpty()) return null
+            val kx = FloatArray(26) { Float.NaN }
+            val ky = FloatArray(26) { Float.NaN }
+            for ((tv, s) in letterKeys) {
+                val (cx, cy) = centerOf(tv)
+                kx[s[0] - 'a'] = cx; ky[s[0] - 'a'] = cy
+            }
+            return SwipeInput(xs.toFloatArray(), ys.toFloatArray(), kx, ky, keyWidth())
+        }
+
+        private fun keyWidth(): Float = letterKeys.firstOrNull()?.first?.let { (it.parent as View).width.toFloat() } ?: 1f
+
+        /** Centre of a key in this layer's coordinates. */
+        private fun centerOf(v: View): Pair<Float, Float> {
+            val frame = v.parent as View
+            val row = frame.parent as View
+            return (row.left + frame.left + frame.width / 2f) to (row.top + frame.top + frame.height / 2f)
+        }
+
+        private fun letterAt(x: Float, y: Float): String? {
+            for ((tv, s) in letterKeys) {
+                val frame = tv.parent as View
+                val row = frame.parent as View
+                val l = row.left + frame.left; val t = row.top + frame.top
+                if (x >= l && x < l + frame.width && y >= t && y < t + frame.height) return s
+            }
+            return null
+        }
+    }
+
     private fun tap(v: View) = v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
     private fun ripple(fill: Int?): RippleDrawable {
@@ -260,9 +399,12 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
     }
 
     companion object {
+        const val MAX_SUGGESTIONS = 9
         private const val KEY_H = 54
         private const val DOUBLE_TAP_MS = 300L
         private const val REPEAT_DELAY_MS = 400L
         private const val REPEAT_MS = 50L
+        /** Travel (in key widths) before a touch on a letter becomes a swipe. */
+        private const val SWIPE_START_KEYS = 0.6f
     }
 }

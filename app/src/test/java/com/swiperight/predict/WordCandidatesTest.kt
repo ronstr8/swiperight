@@ -61,6 +61,20 @@ class WordCandidatesTest {
     }
 
     @Test
+    fun standaloneIIsCapitalized() {
+        val l = logits("Ġi", "Ġit", "Ġif")
+        assertEquals(listOf("I", "it", "if"), wc.select(l, ctx("i")))
+        assertEquals("I", WordCandidates.fixStandaloneI("i"))
+        assertEquals("in", WordCandidates.fixStandaloneI("in"))
+    }
+
+    @Test
+    fun nineSuggestions() {
+        val l = logits("Ġthe", "Ġa", "Ġmy", "Ġyour", "Ġthis", "Ġthat", "Ġour", "Ġhis", "Ġher", "Ġtheir")
+        assertEquals(listOf("the", "a", "my", "your", "this", "that", "our", "his", "her"), wc.select(l, ctx(), k = 9))
+    }
+
+    @Test
     fun wordLikeRules() {
         assertTrue(WordCandidates.isWordLike("don't"))
         assertTrue(WordCandidates.isWordLike("café"))

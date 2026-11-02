@@ -4,6 +4,15 @@ An Android keyboard (`InputMethodService`) with **on-device next-word prediction
 distilgpt2 with 4-bit weights, running on TensorFlow Lite. Fully offline: the app does
 not request the `INTERNET` permission.
 
+- **Suggestions:** a scrolling strip of up to 9 words, best first. Three fill the
+  width; swipe the strip for the rest.
+- **Swipe typing:** drag across the letters. The decoder matches the shape against
+  every whole-word token in the model's vocabulary and weighs each match by how
+  likely the model thinks that word comes next. Shape-identical words ("to"/"too")
+  are decided by context. The swiped word stays editable: tap an alternate to
+  replace it, or press backspace to remove it.
+- **"i" → "I"** when typed as a whole word ("i'm" → "I'm"), and in suggestions.
+
 ```
 text before cursor ─► ContextBuilder ─► BpeTokenizer ─► TFLite Interpreter ─► WordCandidates ─► top-3 words
    (last 32 chars)    (prefix/slot)      (tokenizer.json)  (distilgpt2.tflite,     (whole words,
@@ -35,6 +44,7 @@ text before cursor ─► ContextBuilder ─► BpeTokenizer ─► TFLite Inter
 | `predict/BpeTokenizer.kt`, `TokenizerLoader.kt` | Byte-level BPE from `tokenizer.json` (`vocab`, `merges`, `special_tokens`), no dependencies |
 | `predict/ContextBuilder.kt` | 32-char window, partial-word prefix, space/newline/punctuation handling, edge cases |
 | `predict/WordCandidates.kt` | Logits → whole-word suggestions |
+| `predict/SwipeDecoder.kt` | Gesture decoding: path shape × language-model prior |
 | `ime/SwipeRightIme.kt`, `ime/KeyboardView.kt` | The keyboard: threading, commit logic, privacy, memory release |
 | `ui/MainActivity.kt` | Setup + on-device benchmark |
 | `tools/build_model.sh` | Rebuilds all model assets from the Hugging Face checkpoint |
@@ -140,7 +150,12 @@ must insert a space before the word.
   can only be offered by its first piece. Between words, a fragment such as "un" can
   occasionally show up. A second, batched pass to finish words, or a dictionary filter,
   would fix this at about 2× the cost.
-- English only (it's GPT-2). No autocorrect, no swipe typing, no learning from the user.
+- Swipe and suggestions share one vocabulary: GPT-2's single-token words, about 30k
+  distinct a–z words. Common words are covered; rarer words that GPT-2 splits into
+  several tokens must be typed. At the start of a field, where context is weak,
+  swipe alternates can include word fragments.
+- Swipe costs one model run plus shape matching: 15–35 ms on a Snapdragon 8 Gen 3.
+- English only (it's GPT-2). No autocorrect for tapped typing, no learning from the user.
 - NNAPI: the hybrid int4 FC layers are generally not accepted by NNAPI drivers, so on
   most phones AUTO measures NNAPI and then chooses CPU (XNNPACK). NNAPI is also
   deprecated from Android 15. The choice is measured per device and cached.

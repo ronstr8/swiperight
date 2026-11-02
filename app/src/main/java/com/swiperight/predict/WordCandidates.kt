@@ -22,6 +22,7 @@ import java.util.Locale
 class WordCandidates(private val tokenizer: BpeTokenizer) {
 
     private val size = tokenizer.vocabSize
+    internal val vocabSize: Int get() = size
 
     /** Decoded word for each token id (without its leading space), or null if not word-like. */
     private val wordOf = arrayOfNulls<String>(size)
@@ -40,6 +41,10 @@ class WordCandidates(private val tokenizer: BpeTokenizer) {
             leadingSpace[id] = space
         }
     }
+
+    internal fun wordAt(id: Int): String? = wordOf[id]
+    internal fun lowerAt(id: Int): String? = lowerOf[id]
+    internal fun hasLeadingSpace(id: Int): Boolean = leadingSpace[id]
 
     /**
      * Top [k] distinct words (case-insensitive) for [ctx], best first.
@@ -76,14 +81,18 @@ class WordCandidates(private val tokenizer: BpeTokenizer) {
         for (j in order) {
             val id = poolIds[j]
             if (!seen.add(lowerOf[id]!!)) continue
-            out += applyCase(wordOf[id]!!, ctx.prefix)
+            out += fixStandaloneI(applyCase(wordOf[id]!!, ctx.prefix))
             if (out.size == k) break
         }
         return out
     }
 
     companion object {
-        private const val POOL = 12
+        /** Candidate pool kept during the vocab scan; headroom for case dedupe of up to 9 results. */
+        private const val POOL = 32
+
+        /** English capitalizes the pronoun: "i" is always "I". */
+        internal fun fixStandaloneI(w: String): String = if (w == "i") "I" else w
 
         internal fun isWordLike(w: String): Boolean {
             if (w.isEmpty() || w.length > 30) return false

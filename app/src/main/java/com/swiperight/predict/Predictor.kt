@@ -82,10 +82,36 @@ class Predictor private constructor(
 
     @Synchronized
     fun predict(textBeforeCursor: CharSequence, k: Int = 3): Prediction {
-        val itp = interpreter ?: throw IllegalStateException("Predictor is closed")
         val ctx = ContextBuilder.build(textBeforeCursor)
         if (ctx.suppress) return Prediction(emptyList(), ctx, 0, 0.0)
+        val (n, ms) = infer(ctx)
+        return Prediction(candidates.select(logits, ctx, k), ctx, n, ms)
+    }
 
+    /**
+     * Decodes a swipe into up to [k] words, best first, as the *next* word
+     * after [textBeforeCursor]. If the text ends mid-word or right after
+     * punctuation, the caller inserts the separating space on commit; the
+     * context is built as if that space were already there.
+     */
+    @Synchronized
+    fun decodeSwipe(textBeforeCursor: CharSequence, swipe: SwipeInput, k: Int = 9): Prediction {
+        val text = textBeforeCursor.toString()
+        val needsSpace = text.isNotEmpty() && ContextBuilder.build(text).let { it.prefix.isNotEmpty() || it.insertSpace }
+        val ctx = ContextBuilder.build(if (needsSpace) "$text " else text).copy(suppress = false, prefix = "")
+        val (n, ms) = infer(ctx)
+        val t0 = SystemClock.elapsedRealtimeNanos()
+        val words = swipeDecoder.decode(swipe, logits, ctx.spaceBefore, k)
+        val decodeMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6
+        return Prediction(words, ctx.copy(insertSpace = needsSpace), n, ms + decodeMs)
+    }
+
+    // Built at load (background thread), not on the first swipe: ~0.3 s on device.
+    private val swipeDecoder = SwipeDecoder(candidates).also { it.warmUp(vocab) }
+
+    /** Runs the model for [ctx]; fills [logits]. Returns (token count, inference ms). */
+    private fun infer(ctx: PredictionContext): Pair<Int, Double> {
+        val itp = interpreter ?: throw IllegalStateException("Predictor is closed")
         val tokens = contextTokens(ctx)
         idsBuf.clear()
         for (i in 0 until seqLen) idsBuf.putInt(if (i < tokens.size) tokens[i] else manifest.padId)
@@ -101,8 +127,7 @@ class Predictor private constructor(
         val ms = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6
         outBuf.rewind()
         outBuf.asFloatBuffer().get(logits)
-
-        return Prediction(candidates.select(logits, ctx, k), ctx, tokens.size, ms)
+        return tokens.size to ms
     }
 
     /** BOS (at document start) + context tokens, keeping the most recent [seqLen]. */

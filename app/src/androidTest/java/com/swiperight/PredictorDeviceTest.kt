@@ -81,6 +81,42 @@ class PredictorDeviceTest {
         }
     }
 
+    private fun syntheticSwipe(word: String): com.swiperight.predict.SwipeInput {
+        val w = 100f
+        val kx = FloatArray(26) { Float.NaN }; val ky = FloatArray(26) { Float.NaN }
+        listOf("qwertyuiop" to 0f, "asdfghjkl" to 0.5f, "zxcvbnm" to 1.5f).forEachIndexed { r, (keys, off) ->
+            keys.forEachIndexed { i, c -> kx[c - 'a'] = (off + i + 0.5f) * w; ky[c - 'a'] = (r * 1.4f + 0.7f) * w }
+        }
+        val rnd = java.util.Random(7)
+        val xs = ArrayList<Float>(); val ys = ArrayList<Float>()
+        for (i in 0 until word.length - 1) {
+            val a = word[i] - 'a'; val b = word[i + 1] - 'a'
+            for (s in 0 until 8) {
+                val t = s / 8f
+                xs += kx[a] + t * (kx[b] - kx[a]) + (rnd.nextFloat() - 0.5f) * 30
+                ys += ky[a] + t * (ky[b] - ky[a]) + (rnd.nextFloat() - 0.5f) * 30
+            }
+        }
+        xs += kx[word.last() - 'a']; ys += ky[word.last() - 'a']
+        return com.swiperight.predict.SwipeInput(xs.toFloatArray(), ys.toFloatArray(), kx, ky, w)
+    }
+
+    @Test
+    fun swipeDecodesInContext() {
+        // Warm-up: the first decode runs before ART has compiled the decoder.
+        val warm = (0 until 10).map { p.decodeSwipe("I'm going to the ", syntheticSwipe("store")).inferenceMillis }
+        Log.i("PredictorSamples", "swipe warm-up ms: " + warm.joinToString { "%.1f".format(it) })
+        for ((ctx, word) in listOf(
+            "I'm going to the " to "store", "Thank you so " to "much", "See you " to "tomorrow",
+            "" to "hello", "Can we meet at the " to "office", "I love" to "you",
+        )) {
+            val r = p.decodeSwipe(ctx, syntheticSwipe(word))
+            Log.i("PredictorSamples", "swipe %-28s + '%s' -> %s (%.1f ms)".format("\"$ctx\"", word, r.words, r.inferenceMillis))
+            assertTrue("$ctx + $word -> ${r.words}", word in r.words.take(3).map { it.lowercase() })
+            assertTrue(r.inferenceMillis < 100.0)
+        }
+    }
+
     @Test
     fun latencyUnderBudget() {
         val samples = listOf("I'm going to the ", "Can we meet at the ", "See you tomor", "")
