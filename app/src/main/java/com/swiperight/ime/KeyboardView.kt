@@ -41,6 +41,8 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         fun onSuggestion(word: String)
         /** A completed swipe across letter keys; [shift] is the shift state when it started. */
         fun onSwipe(swipe: SwipeInput, shift: Shift)
+        /** The path so far, each time the finger enters a new key. Answer with [showSwipePreview]. */
+        fun onSwipeProgress(swipe: SwipeInput, shift: Shift) {}
     }
 
     enum class Shift { OFF, ONCE, LOCKED }
@@ -130,7 +132,7 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
             row.addView(tv, LayoutParams(slotWidth, LayoutParams.MATCH_PARENT))
             suggestionViews += tv
         }
-        // Letters traced by an in-progress swipe, shown over the suggestions.
+        // The word the in-progress swipe currently decodes to, shown over the suggestions.
         traceLabel = TextView(context).apply {
             gravity = Gravity.CENTER
             setTextColor(accent)
@@ -149,13 +151,22 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         }
     }
 
-    private fun showTrace(letters: String?) {
-        if (letters == null) {
-            traceLabel.visibility = View.GONE
-        } else {
-            traceLabel.text = if (shift != Shift.OFF) letters.uppercase() else letters
-            traceLabel.visibility = View.VISIBLE
-        }
+    private var swipeActive = false
+
+    private fun showTrace(active: Boolean) {
+        swipeActive = active
+        traceLabel.text = ""
+        traceLabel.visibility = if (active) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * Live decode of the swipe in progress. Ignored once the finger has
+     * lifted, so a late result can't overwrite the final word. An empty
+     * result keeps the previous word rather than flickering.
+     */
+    fun showSwipePreview(word: String?) {
+        if (!swipeActive || word.isNullOrEmpty()) return
+        traceLabel.text = word
     }
 
     private fun buildRows() {
@@ -435,15 +446,15 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
             alpha = 170
         }
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-        private val traced = StringBuilder()
+        private var lastKey: String? = null
         private var litKey: TextView? = null
 
-        /** Light the key under the finger and extend the traced letters when it changes. */
-        private fun track(x: Float, y: Float) {
+        /** Light the key under the finger; on entering a new key, ask for a live decode. */
+        private fun track(x: Float, y: Float, report: Boolean = true) {
             val hit = letterKeyAt(x, y)
-            if (hit != null && hit.second.isNotEmpty() && (traced.isEmpty() || traced.last() != hit.second[0])) {
-                traced.append(hit.second)
-                showTrace(traced.toString())
+            if (hit != null && hit.second != lastKey) {
+                lastKey = hit.second
+                if (report && xs.size >= 2) buildSwipe()?.let { listener.onSwipeProgress(it, startShift) }
             }
             val tv = hit?.first
             if (tv !== litKey) {
@@ -456,8 +467,8 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
         private fun endTrace() {
             litKey?.isPressed = false
             litKey = null
-            traced.setLength(0)
-            showTrace(null)
+            lastKey = null
+            showTrace(false)
         }
 
         init {
@@ -482,8 +493,10 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
                     val kw = keyWidth()
                     if (hypot(e.x - downX, e.y - downY) > maxOf(touchSlop.toFloat(), kw * SWIPE_START_KEYS)) {
                         swiping = true
-                        traced.setLength(0)
-                        for (i in xs.indices) track(xs[i], ys[i])
+                        showTrace(true)
+                        lastKey = null
+                        for (i in xs.indices) track(xs[i], ys[i], report = false)
+                        buildSwipe()?.let { listener.onSwipeProgress(it, startShift) }
                         trail.reset()
                         trail.moveTo(xs[0], ys[0])
                         for (i in 1 until xs.size) trail.lineTo(xs[i], ys[i])

@@ -192,7 +192,31 @@ class SwipeRightIme : InputMethodService(), KeyboardView.Listener {
         lastCommitWasSuggestion = true
     }
 
+    // Live swipe preview: one decode in flight at a time; newer paths replace queued ones.
+    private var previewBusy = false
+    private var previewQueued: Pair<SwipeInput, KeyboardView.Shift>? = null
+
+    override fun onSwipeProgress(swipe: SwipeInput, shift: KeyboardView.Shift) {
+        if (!swipeEnabled) return
+        if (previewBusy) { previewQueued = swipe to shift; return }
+        val text = currentInputConnection?.getTextBeforeCursor(CONTEXT_CHARS, 0)?.toString() ?: return
+        previewBusy = true
+        worker.post {
+            val word = try {
+                ensurePredictor()?.decodeSwipe(text, swipe, 1)?.words?.firstOrNull()
+            } catch (e: Exception) {
+                Log.e(TAG, "swipe preview failed", e); null
+            }
+            main.post {
+                previewBusy = false
+                keyboard?.showSwipePreview(word?.let { applyShift(it, shift) })
+                previewQueued?.let { (s2, sh2) -> previewQueued = null; onSwipeProgress(s2, sh2) }
+            }
+        }
+    }
+
     override fun onSwipe(swipe: SwipeInput, shift: KeyboardView.Shift) {
+        previewQueued = null
         if (!swipeEnabled) return
         val ic = currentInputConnection ?: return
         if (composingSwipe) {

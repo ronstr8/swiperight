@@ -103,8 +103,17 @@ class Predictor private constructor(
         val ctx = ContextBuilder.build(if (needsSpace) "$text " else text).copy(suppress = false, prefix = "")
         val tokens = contextTokens(ctx)
         val t0 = SystemClock.elapsedRealtimeNanos()
-        infer(tokens, logits)
-        val words = swipeDecoder.decode(swipe, logits, ctx.spaceBefore, k) { baseId -> infer(tokens + baseId, logits2); logits2 }
+        // Live previews decode the same context many times per swipe: run the
+        // model once per context and reuse its output (also for the second pass).
+        if (!tokens.contentEquals(swipeTokens)) {
+            infer(tokens, swipeLogits)
+            swipeTokens = tokens
+            swipeNextBase = -1
+        }
+        val words = swipeDecoder.decode(swipe, swipeLogits, ctx.spaceBefore, k) { baseId ->
+            if (baseId != swipeNextBase) { infer(tokens + baseId, swipeLogits2); swipeNextBase = baseId }
+            swipeLogits2
+        }
         val totalMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6
         return Prediction(words, ctx.copy(insertSpace = needsSpace), tokens.size, totalMs)
     }
@@ -115,6 +124,12 @@ class Predictor private constructor(
     private val swipeDecoder = SwipeDecoder(candidates, contractions).also { it.warmUp(vocab) }
     /** Second-pass logits (contraction suffixes), so the first pass stays intact. */
     private val logits2 = FloatArray(vocab)
+
+    // Swipe-only model outputs, cached per context (see decodeSwipe).
+    private val swipeLogits = FloatArray(vocab)
+    private val swipeLogits2 = FloatArray(vocab)
+    private var swipeTokens: IntArray? = null
+    private var swipeNextBase = -1
 
     /** Runs the model on [tokens] (most recent [seqLen] kept) into [dest]. Returns inference ms. */
     private fun infer(tokens: IntArray, dest: FloatArray): Double {

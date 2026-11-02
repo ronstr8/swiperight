@@ -11,8 +11,10 @@ not request the `INTERNET` permission.
   likely the model thinks that word comes next. Shape-identical words ("to"/"too")
   are decided by context. The swiped word stays editable: tap an alternate to
   replace it, or press backspace to remove it.
-- **Live swipe feedback:** a trail, the key under the finger lit up, and the traced
-  letters shown in the strip while you swipe.
+- **Live swipe feedback:** a trail, the key under the finger lit up, and the word the
+  path decodes to so far, updated each time the finger reaches a new key. The model
+  runs once per swipe and its output is reused, so each update is just shape matching
+  (a few ms). Only the newest path is decoded if updates arrive faster than that.
 - **Contractions:** it's, don't, I'm, you're and about 55 others are suggested and
   swipeable, with or without typing the apostrophe ("dont" → don't, swipe "its" →
   it's or its depending on context). GPT-2 stores these as two tokens, so they're
