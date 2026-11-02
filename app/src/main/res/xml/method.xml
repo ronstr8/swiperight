@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  No <subtype>: with one, the system keyboard picker shows the subtype label
+  ("English (US)") as the title and the app name underneath. Without one it
+  shows just "swiperight". Add subtypes back only for real multi-language support.
+-->
 <input-method xmlns:android="http://schemas.android.com/apk/res/android"
     android:settingsActivity="com.swiperight.ui.MainActivity"
-    android:supportsSwitchingToNextInputMethod="true">
-    <subtype
-        android:imeSubtypeLocale="en_US"
-        android:imeSubtypeMode="keyboard"
-        android:label="@string/subtype_en_us" />
-</input-method>
+    android:supportsSwitchingToNextInputMethod="true" />

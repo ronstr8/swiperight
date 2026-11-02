@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">swiperight</string>
-    <string name="subtype_en_us">English (US)</string>
     <string name="setup_title">swiperight keyboard</string>
     <string name="setup_body">On-device next-word prediction (distilgpt2, 4-bit, TensorFlow Lite). Nothing you type leaves the phone; the app has no network permission.\n\n1. Enable swiperight in the system keyboard list.\n2. Switch to it.\n3. Type in the box below.</string>
     <string name="enable">1. Enable keyboard</string>
