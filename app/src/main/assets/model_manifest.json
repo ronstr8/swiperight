@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "model_version": "distilgpt2-int4-gptq-sq-v1",
+  "created_utc": "2026-11-02T19:49:48Z",
+  "model": {
+    "file": "distilgpt2.tflite",
+    "bytes": 61521240,
+    "sha256": "fba4e404038a0f5ccf052b58d1a35d360e0d258c594c8dade665ad3e135ceed8",
+    "seq_len": 16,
+    "vocab_size": 50257,
+    "inputs": [
+      "input_ids:int32[1,16]",
+      "last_index:int32[1]"
+    ],
+    "outputs": [
+      "logits:float32[1,50257]"
+    ],
+    "quantization": "INT4 per-output-channel weights (GPTQ + SmoothQuant a=0.5), dynamic int8 activations; int4 per-row embedding table",
+    "runtime": "org.tensorflow:tensorflow-lite:2.17.0",
+    "source": "distilbert/distilgpt2 (Apache-2.0)"
+  },
+  "tokenizer": {
+    "file": "tokenizer.json",
+    "bytes": 1554731,
+    "sha256": "7282825007ca85ec87bf9285c8b4639259d5dd5da0ad9a303d521b3c7af5c91f",
+    "vocab_size": 50257,
+    "merges": 50000,
+    "bos_id": 50256,
+    "pad_id": 50256
+  },
+  "eval": {
+    "top1": 0.8197,
+    "top3_overlap": 0.776,
+    "ref_top1_in_top3": 0.9426,
+    "kl": 0.1325,
+    "n": 244,
+    "reference": "eval.npz"
+  }
+}

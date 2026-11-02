@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A keycap with a right-pointing chevron. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M36,38h36a6,6 0 0 1 6,6v20a6,6 0 0 1 -6,6h-36a6,6 0 0 1 -6,-6v-20a6,6 0 0 1 6,-6z" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFE8505B" android:strokeWidth="5"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M48,46l8,8l-8,8" />
+</vector>
