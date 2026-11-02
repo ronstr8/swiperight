@@ -44,9 +44,20 @@ class SwipeInput(
  * Limitation: as with suggestions, only words that are a single GPT-2 token
  * are swipeable. Multi-token words have to be typed.
  */
-class SwipeDecoder(words: WordCandidates) {
+class SwipeDecoder(private val words: WordCandidates, private val contractions: Contractions? = null) {
 
     private class Entry(val word: String, val spaced: IntArray, val bare: IntArray, val letters: IntArray)
+
+    /** A contraction is swiped by its letters: "its" -> "it's", "dont" -> "don't". */
+    private class CEntry(val entry: Contractions.Entry, val letters: IntArray)
+
+    private class Cand(val word: String, val shape: Float, var lm: Float, val baseId: Int = -1, val suffixId: Int = -1) {
+        val total get() = shape + LM_WEIGHT * lm
+    }
+
+    private val cBuckets: Array<ArrayList<CEntry>> = Array(26) { ArrayList() }
+    private val typoForms: Set<String> =
+        (contractions?.entries?.map { it.stripped }?.toSet() ?: emptySet()) - Contractions.REAL_WORDS
 
     /** Lexicon bucketed by first letter. */
     private val buckets: Array<ArrayList<Entry>>
@@ -72,6 +83,15 @@ class SwipeDecoder(words: WordCandidates) {
         }
     }
 
+    init {
+        contractions?.entries?.forEach { e ->
+            if (e.stripped.all { it in 'a'..'z' }) {
+                val letters = collapse(e.stripped)
+                if (letters.size >= 2) cBuckets[e.stripped[0] - 'a'] += CEntry(e, letters)
+            }
+        }
+    }
+
     private val wordAt: (Int) -> String = { words.wordAt(it)!! }
 
     /**
@@ -80,7 +100,13 @@ class SwipeDecoder(words: WordCandidates) {
      * ("Ġword" vs "word") the context calls for; the other variant is still
      * allowed, with a penalty.
      */
-    fun decode(input: SwipeInput, logits: FloatArray, spaceBefore: Boolean, k: Int = 9): List<String> {
+    fun decode(
+        input: SwipeInput,
+        logits: FloatArray,
+        spaceBefore: Boolean,
+        k: Int = 9,
+        nextLogits: ((baseId: Int) -> FloatArray)? = null,
+    ): List<String> {
         val kw = input.keyWidth
         val ux = FloatArray(input.xs.size) { input.xs[it] / kw }
         val uy = FloatArray(input.ys.size) { input.ys[it] / kw }
@@ -90,22 +116,27 @@ class SwipeDecoder(words: WordCandidates) {
         val cy = FloatArray(26) { input.keyY[it] / kw }
 
         val lse = logSumExp(logits)
-        val scored = ArrayList<Pair<Float, String>>()
+        val cands = ArrayList<Cand>()
         val tx = FloatArray(32); val ty = FloatArray(32)
+
+        /** Mean resampled distance to the ideal path of [letters], or null if pruned. */
+        fun shapeDist(letters: IntArray): Float? {
+            val last = letters.last()
+            if (cx[last].isNaN() || dist(cx[last], cy[last], ex, ey) > PRUNE) return null
+            if (letters.any { cx[it].isNaN() }) return null
+            for ((i, l) in letters.withIndex()) { tx[i] = cx[l]; ty[i] = cy[l] }
+            val (wx, wy) = resample(tx.copyOf(letters.size), ty.copyOf(letters.size), N)
+            var d = 0f
+            for (i in 0 until N) d += dist(rx[i], ry[i], wx[i], wy[i])
+            d /= N
+            return if (d > MAX_MEAN_DIST) null else d
+        }
+
         for (first in 0 until 26) {
             if (cx[first].isNaN() || dist(cx[first], cy[first], sx, sy) > PRUNE) continue
             for (e in buckets[first]) {
-                val last = e.letters.last()
-                if (cx[last].isNaN() || dist(cx[last], cy[last], ex, ey) > PRUNE) continue
-                if (e.letters.any { cx[it].isNaN() }) continue
-                for ((i, l) in e.letters.withIndex()) { tx[i] = cx[l]; ty[i] = cy[l] }
-                val (wx, wy) = resample(tx.copyOf(e.letters.size), ty.copyOf(e.letters.size), N)
-                var d = 0f
-                for (i in 0 until N) d += dist(rx[i], ry[i], wx[i], wy[i])
-                d /= N
-                if (d > MAX_MEAN_DIST) continue
-                val shape = -(d * d) / (2 * SIGMA * SIGMA)
-
+                if (e.word in typoForms) continue
+                val d = shapeDist(e.letters) ?: continue
                 // Best-scoring token variant for this slot, and its surface form.
                 val (preferred, other) = if (spaceBefore) e.spaced to e.bare else e.bare to e.spaced
                 var bestLp = Float.NEGATIVE_INFINITY
@@ -113,16 +144,41 @@ class SwipeDecoder(words: WordCandidates) {
                 for (id in preferred) { val lp = logits[id] - lse; if (lp > bestLp) { bestLp = lp; form = wordAt(id) } }
                 for (id in other) { val lp = logits[id] - lse - WRONG_SLOT_PENALTY; if (lp > bestLp) { bestLp = lp; form = wordAt(id) } }
                 if (bestLp.isNaN()) continue
-                scored += (shape + LM_WEIGHT * max(bestLp, LM_FLOOR)) to form
+                cands += Cand(form, shapeScore(d), max(bestLp, LM_FLOOR))
+            }
+            if (contractions != null) for (c in cBuckets[first]) {
+                val v = contractions.bestVariant(c.entry, spaceBefore, logits) ?: continue
+                val d = shapeDist(c.letters) ?: continue
+                // Rough prior until refined below with a real second pass.
+                cands += Cand(v.surface, shapeScore(d), max(logits[v.baseId] - lse + CONTRACTION_PRIOR, LM_FLOOR), v.baseId, c.entry.suffixId)
             }
         }
-        scored.sortByDescending { it.first }
+        cands.sortByDescending { it.total }
+
+        // Exact contraction scores for the best contraction base that made the top k.
+        val topC = cands.take(k).firstOrNull { it.baseId >= 0 }
+        if (topC != null && nextLogits != null) {
+            val next = nextLogits(topC.baseId)
+            val lse2 = logSumExp(next)
+            val baseLp = logits[topC.baseId] - lse
+            var mass = 0.0
+            for (c in cands) if (c.baseId == topC.baseId) {
+                val lp2 = next[c.suffixId] - lse2
+                mass += exp(lp2.toDouble())
+                c.lm = max(baseLp + lp2, LM_FLOOR)
+            }
+            val baseLower = words.lowerAt(topC.baseId)
+            val rest = ln(max(1e-6, 1.0 - mass)).toFloat()
+            for (c in cands) if (c.baseId < 0 && c.word.lowercase() == baseLower) c.lm = max(c.lm + rest, LM_FLOOR)
+            cands.sortByDescending { it.total }
+        }
+
         val seen = HashSet<String>()
         val out = ArrayList<String>(k)
-        val best = scored.firstOrNull()?.first ?: return out
-        for ((score, w) in scored) {
-            if (best - score > ALT_MARGIN) break // far-fetched alternates are noise, not choices
-            if (seen.add(w.lowercase())) out += WordCandidates.fixStandaloneI(w)
+        val best = cands.firstOrNull()?.total ?: return out
+        for (c in cands) {
+            if (best - c.total > ALT_MARGIN) break // far-fetched alternates are noise, not choices
+            if (seen.add(c.word.lowercase())) out += WordCandidates.fixStandaloneI(c.word)
             if (out.size == k) break
         }
         return out
@@ -156,6 +212,10 @@ class SwipeDecoder(words: WordCandidates) {
         private const val LM_WEIGHT = 0.6f
         private const val LM_FLOOR = -25f
         private const val WRONG_SLOT_PENALTY = 3f
+        /** log 0.3: typical share of a base word's probability that a contraction takes. */
+        private const val CONTRACTION_PRIOR = -1.2f
+
+        private fun shapeScore(d: Float) = -(d * d) / (2 * SIGMA * SIGMA)
 
         /** Letter indices with consecutive repeats removed: "hello" -> h e l o. */
         internal fun collapse(w: String): IntArray {

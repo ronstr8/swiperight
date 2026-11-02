@@ -50,14 +50,21 @@ class WordCandidates(private val tokenizer: BpeTokenizer) {
      * Top [k] distinct words (case-insensitive) for [ctx], best first.
      * [logits] has one entry per vocab id. It is read, never modified.
      */
-    fun select(logits: FloatArray, ctx: PredictionContext, k: Int = 3): List<String> {
+    fun select(logits: FloatArray, ctx: PredictionContext, k: Int = 3): List<String> =
+        selectScored(logits, ctx, k).map { format(it.first, ctx.prefix) }
+
+    /**
+     * Top [k] distinct words (case-insensitive) with their raw logits, best
+     * first. Words are in the model's casing; see [format].
+     */
+    fun selectScored(logits: FloatArray, ctx: PredictionContext, k: Int): List<Pair<String, Float>> {
         require(logits.size >= size) { "logits (${logits.size}) shorter than vocab ($size)" }
         if (ctx.suppress) return emptyList()
         val prefixLower = ctx.prefix.lowercase(Locale.ROOT)
+        val pool = maxOf(POOL, k * 3)
 
-        // Keep the best POOL candidates by logit; enough headroom for dedupe.
-        val poolIds = IntArray(POOL) { -1 }
-        val poolScores = FloatArray(POOL) { Float.NEGATIVE_INFINITY }
+        val poolIds = IntArray(pool) { -1 }
+        val poolScores = FloatArray(pool) { Float.NEGATIVE_INFINITY }
         var minIdx = 0
         for (id in 0 until size) {
             val lw = lowerOf[id] ?: continue
@@ -72,16 +79,16 @@ class WordCandidates(private val tokenizer: BpeTokenizer) {
             poolIds[minIdx] = id
             poolScores[minIdx] = sc
             minIdx = 0
-            for (j in 1 until POOL) if (poolScores[j] < poolScores[minIdx]) minIdx = j
+            for (j in 1 until pool) if (poolScores[j] < poolScores[minIdx]) minIdx = j
         }
 
-        val order = (0 until POOL).filter { poolIds[it] >= 0 }.sortedByDescending { poolScores[it] }
+        val order = (0 until pool).filter { poolIds[it] >= 0 }.sortedByDescending { poolScores[it] }
         val seen = HashSet<String>()
-        val out = ArrayList<String>(k)
+        val out = ArrayList<Pair<String, Float>>(k)
         for (j in order) {
             val id = poolIds[j]
             if (!seen.add(lowerOf[id]!!)) continue
-            out += fixStandaloneI(applyCase(wordOf[id]!!, ctx.prefix))
+            out += wordOf[id]!! to poolScores[j]
             if (out.size == k) break
         }
         return out
@@ -90,6 +97,9 @@ class WordCandidates(private val tokenizer: BpeTokenizer) {
     companion object {
         /** Candidate pool kept during the vocab scan; headroom for case dedupe of up to 9 results. */
         private const val POOL = 32
+
+        /** Final display form: typed casing, then the "I" rule. */
+        fun format(word: String, prefix: String): String = fixStandaloneI(applyCase(word, prefix))
 
         /** English capitalizes the pronoun: "i" is always "I". */
         internal fun fixStandaloneI(w: String): String = if (w == "i") "I" else w

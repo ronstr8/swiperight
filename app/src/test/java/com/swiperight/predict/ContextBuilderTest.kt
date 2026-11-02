@@ -82,12 +82,18 @@ class ContextBuilderTest {
     }
 
     @Test
-    fun contractionsAndNonWordsSuppressed() {
-        assertTrue(b("I don'").suppress)
-        assertTrue(b("I don't").suppress) // "t" after an apostrophe is not a word start
+    fun contractionInProgressIsThePrefix() {
+        val a = b("I think it'")
+        assertEquals("it'", a.prefix); assertEquals("I think", a.context); assertTrue(a.spaceBefore); assertFalse(a.suppress)
+        assertEquals("don't", b("I don't").prefix)
+        assertEquals("you’r", b("I know you’r").prefix)
+        assertEquals("hel", b("he said 'hel").prefix) // opening quote, not a contraction
+    }
+
+    @Test
+    fun nonWordsSuppressed() {
         assertTrue(b("abc123de").suppress)
         assertTrue(b("x".repeat(40)).suppress)
-        assertFalse(b("he said 'hel").suppress) // opening quote, not a contraction
     }
 
     @Test

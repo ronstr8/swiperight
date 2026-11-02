@@ -14,8 +14,8 @@ package com.swiperight.predict
  *   needs one before it (e.g. right after "end."). The IME adds it on commit.
  * @property docStart the whole field fits in the window, so a BOS token is
  *   prepended. GPT-2 was trained with `<|endoftext|>` between documents.
- * @property suppress nothing sensible to suggest: inside a contraction ("don'"),
- *   or a "word" too long to be one (a URL or hash).
+ * @property suppress nothing sensible to suggest: a "word" too long to be one
+ *   (a URL or hash) or glued to digits.
  */
 data class PredictionContext(
     val context: String,
@@ -56,18 +56,22 @@ object ContextBuilder {
             }
         }
 
-        // Partially typed word: the trailing run of letters.
+        // Partially typed word: trailing letters, possibly with one apostrophe
+        // inside or at the end ("it'", "don't", "you’r"): a contraction being typed.
         var p = w.length
-        while (p > 0 && w[p - 1].isLetter()) p--
+        var apostrophes = 0
+        while (p > 0) {
+            val c = w[p - 1]
+            if (c.isLetter()) { p--; continue }
+            if ((c == '\'' || c == '’') && apostrophes == 0 && p - 1 > 0 && w[p - 2].isLetter()) { apostrophes++; p--; continue }
+            break
+        }
         val prefix = w.substring(p)
         val before = w.substring(0, p)
-        val inContraction = (before.endsWith('\'') || before.endsWith('’')) &&
-            before.length >= 2 && before[before.length - 2].isLetter()
         val glued = p > 0 && w[p - 1].isLetterOrDigit() // e.g. "abc123de"
-        if (prefix.length > MAX_PREFIX || inContraction || glued || (prefix.isEmpty() && inContractionEnd(w))) {
+        if (prefix.length > MAX_PREFIX || glued) {
             return PredictionContext(w, prefix, true, false, docStart, suppress = true)
         }
-
         if (prefix.isNotEmpty()) {
             return when {
                 before.endsWith(' ') ->
@@ -99,10 +103,6 @@ object ContextBuilder {
                 PredictionContext(w, "", spaceBefore = true, insertSpace = true, docStart = docStart)
         }
     }
-
-    /** "don'" with the cursor right after the apostrophe. */
-    private fun inContractionEnd(w: String): Boolean =
-        w.length >= 2 && (w.last() == '\'' || w.last() == '’') && w[w.length - 2].isLetter()
 
     /** A straight quote counts as opening when at the start or after whitespace/opener. */
     private fun isOpeningQuote(w: String): Boolean {

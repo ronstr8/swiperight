@@ -84,8 +84,10 @@ class Predictor private constructor(
     fun predict(textBeforeCursor: CharSequence, k: Int = 3): Prediction {
         val ctx = ContextBuilder.build(textBeforeCursor)
         if (ctx.suppress) return Prediction(emptyList(), ctx, 0, 0.0)
-        val (n, ms) = infer(ctx)
-        return Prediction(candidates.select(logits, ctx, k), ctx, n, ms)
+        val tokens = contextTokens(ctx)
+        var ms = infer(tokens, logits)
+        val words = ranker.rank(logits, ctx, k) { baseId -> ms += infer(tokens + baseId, logits2); logits2 }
+        return Prediction(words, ctx, tokens.size, ms)
     }
 
     /**
@@ -99,25 +101,30 @@ class Predictor private constructor(
         val text = textBeforeCursor.toString()
         val needsSpace = text.isNotEmpty() && ContextBuilder.build(text).let { it.prefix.isNotEmpty() || it.insertSpace }
         val ctx = ContextBuilder.build(if (needsSpace) "$text " else text).copy(suppress = false, prefix = "")
-        val (n, ms) = infer(ctx)
+        val tokens = contextTokens(ctx)
         val t0 = SystemClock.elapsedRealtimeNanos()
-        val words = swipeDecoder.decode(swipe, logits, ctx.spaceBefore, k)
-        val decodeMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6
-        return Prediction(words, ctx.copy(insertSpace = needsSpace), n, ms + decodeMs)
+        infer(tokens, logits)
+        val words = swipeDecoder.decode(swipe, logits, ctx.spaceBefore, k) { baseId -> infer(tokens + baseId, logits2); logits2 }
+        val totalMs = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6
+        return Prediction(words, ctx.copy(insertSpace = needsSpace), tokens.size, totalMs)
     }
 
     // Built at load (background thread), not on the first swipe: ~0.3 s on device.
-    private val swipeDecoder = SwipeDecoder(candidates).also { it.warmUp(vocab) }
+    private val contractions = Contractions(tokenizer)
+    private val ranker = SuggestionRanker(candidates, contractions)
+    private val swipeDecoder = SwipeDecoder(candidates, contractions).also { it.warmUp(vocab) }
+    /** Second-pass logits (contraction suffixes), so the first pass stays intact. */
+    private val logits2 = FloatArray(vocab)
 
-    /** Runs the model for [ctx]; fills [logits]. Returns (token count, inference ms). */
-    private fun infer(ctx: PredictionContext): Pair<Int, Double> {
+    /** Runs the model on [tokens] (most recent [seqLen] kept) into [dest]. Returns inference ms. */
+    private fun infer(tokens: IntArray, dest: FloatArray): Double {
         val itp = interpreter ?: throw IllegalStateException("Predictor is closed")
-        val tokens = contextTokens(ctx)
+        val t = if (tokens.size <= seqLen) tokens else tokens.copyOfRange(tokens.size - seqLen, tokens.size)
         idsBuf.clear()
-        for (i in 0 until seqLen) idsBuf.putInt(if (i < tokens.size) tokens[i] else manifest.padId)
+        for (i in 0 until seqLen) idsBuf.putInt(if (i < t.size) t[i] else manifest.padId)
         idsBuf.rewind()
         lastBuf.clear()
-        lastBuf.putInt(tokens.size - 1).rewind()
+        lastBuf.putInt(t.size - 1).rewind()
         outBuf.clear()
         inputs[idsIndex] = idsBuf
         inputs[lastIndex] = lastBuf
@@ -126,8 +133,8 @@ class Predictor private constructor(
         itp.runForMultipleInputsOutputs(inputs, outputs)
         val ms = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6
         outBuf.rewind()
-        outBuf.asFloatBuffer().get(logits)
-        return tokens.size to ms
+        outBuf.asFloatBuffer().get(dest)
+        return ms
     }
 
     /** BOS (at document start) + context tokens, keeping the most recent [seqLen]. */

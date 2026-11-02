@@ -75,6 +75,7 @@ class PredictorDeviceTest {
             "What time does the mo", "See you tomor", "Sorry, I can't make it to",
             "The meeting has been moved to next ", "Do you want to grab ", "Please call me when you get ",
             "We should probably leave early to avoid the ", "Hello\n", "He said (", "This is the end.",
+            "I think ", "I think it", "I think its", "Yes, it'", "I don", "I dont", "Sorry, I ", "Well, you", "Trust me, ",
         )) {
             val r = p.predict(s)
             Log.i("PredictorSamples", "%-48s -> %s (%.1f ms)".format("\"$s\"", r.words, r.inferenceMillis))
@@ -109,10 +110,12 @@ class PredictorDeviceTest {
         for ((ctx, word) in listOf(
             "I'm going to the " to "store", "Thank you so " to "much", "See you " to "tomorrow",
             "" to "hello", "Can we meet at the " to "office", "I love" to "you",
+            "I think " to "its", "Sorry, I " to "dont", "Honestly " to "im",
         )) {
             val r = p.decodeSwipe(ctx, syntheticSwipe(word))
             Log.i("PredictorSamples", "swipe %-28s + '%s' -> %s (%.1f ms)".format("\"$ctx\"", word, r.words, r.inferenceMillis))
-            assertTrue("$ctx + $word -> ${r.words}", word in r.words.take(3).map { it.lowercase() })
+            val want = mapOf("its" to setOf("its", "it's"), "dont" to setOf("don't"), "im" to setOf("i'm"))[word] ?: setOf(word)
+            assertTrue("$ctx + $word -> ${r.words}", r.words.take(3).any { it.lowercase() in want })
             assertTrue(r.inferenceMillis < 100.0)
         }
     }

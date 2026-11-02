@@ -7,7 +7,7 @@ import kotlin.random.Random
 
 class SwipeDecoderTest {
     private val tok = TestAssets.tokenizer
-    private val decoder = SwipeDecoder(WordCandidates(tok))
+    private val decoder = SwipeDecoder(WordCandidates(tok), Contractions(tok))
 
     // Synthetic QWERTY geometry in key widths; keys 1.4 wide-units tall.
     private val kx = FloatArray(26) { Float.NaN }
@@ -38,8 +38,9 @@ class SwipeDecoderTest {
 
     private val flat = FloatArray(tok.vocabSize)
 
-    private fun boost(vararg tokens: Pair<String, Float>): FloatArray {
-        val l = FloatArray(tok.vocabSize)
+    /** Logits favouring [tokens]; everything else at [floor]. */
+    private fun boost(vararg tokens: Pair<String, Float>, floor: Float = 0f): FloatArray {
+        val l = FloatArray(tok.vocabSize) { floor }
         for ((t, v) in tokens) l[tok.tokenId(t)!!] = v
         return l
     }
@@ -73,6 +74,23 @@ class SwipeDecoderTest {
     fun keepsModelCasingForProperNouns() {
         val out = decoder.decode(swipe("london", noise = 0.05f), boost("ĠLondon" to 10f), true)
         assertEquals("London", out[0])
+    }
+
+    @Test
+    fun swipedContractionUsesSecondPass() {
+        // "its" and "it's" draw the same path; the follow-up distribution decides.
+        val s = swipe("its", noise = 0.05f)
+        val first = boost("Ġit" to 6f, "Ġits" to 4f, floor = -20f)
+        val apostropheS = boost("'s" to 8f, floor = -20f)
+        assertEquals("it's", decoder.decode(s, first, true, nextLogits = { apostropheS })[0])
+        val noSuffix = boost("Ġis" to 8f, floor = -20f)
+        assertEquals("its", decoder.decode(s, first, true, nextLogits = { noSuffix })[0])
+    }
+
+    @Test
+    fun swipedDontBecomesDont() {
+        val out = decoder.decode(swipe("dont", noise = 0.05f), boost("Ġdon" to 6f, floor = -20f), true, nextLogits = { boost("'t" to 8f, floor = -20f) })
+        assertEquals("don't", out[0])
     }
 
     @Test
