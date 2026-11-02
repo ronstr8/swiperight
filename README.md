@@ -20,8 +20,9 @@ not request the `INTERNET` permission.
   it's or its depending on context). GPT-2 stores these as two tokens, so they're
   scored exactly with one extra model pass, and only when they could reach the strip.
 - **"i" → "I"** when typed as a whole word ("i'm" → "I'm"), and in suggestions.
-- **Punctuation panel:** hold the period key, slide to ! ? , ' " : ; - ( ) @ & / …
-  and release, or tap one.
+- **Punctuation panel:** hold the period key (300 ms), slide to ! ? , ' " : ; - ( ) @ & / …
+  and release. The nearest symbol lights up as you slide; release away from the panel
+  to cancel, or lift without moving to leave it open and tap one.
 - **Emoji picker:** the 😊 key opens category tabs, recents and the full Unicode
   15.1 set (`tools/make_emoji.py`). Emoji the phone's font can't draw are hidden.
 

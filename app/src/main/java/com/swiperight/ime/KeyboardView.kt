@@ -320,33 +320,59 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
      * the panel stays open for a tap (touch outside to dismiss).
      */
     @SuppressLint("ClickableViewAccessibility")
+    /**
+     * Hold the period key to open the punctuation panel, then slide onto a
+     * symbol and release to type it. The cell nearest the finger is picked
+     * even slightly outside it, and it is highlighted with a haptic tick as the
+     * finger moves. Releasing away from the panel closes it. Releasing without
+     * leaving the key leaves it open, so you can tap a symbol instead.
+     */
     private fun attachPunctuationPanel(key: TextView) {
         var opened = false
+        var leftKey = false
         var cells: List<TextView> = emptyList()
         var hot: TextView? = null
+        fun setHot(c: TextView?) {
+            if (c === hot) return
+            hot?.let { it.background = ripple(keyColor); it.setTextColor(textColor) }
+            c?.let {
+                it.background = GradientDrawable().apply { cornerRadius = dp(6).toFloat(); setColor(accent) }
+                it.setTextColor(0xFFFFFFFF.toInt())
+                it.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
+            hot = c
+        }
         val open = Runnable {
             opened = true
             tap(key)
             cells = showPunctuationPanel(key)
         }
-        fun cellAt(rawX: Float, rawY: Float): TextView? = cells.firstOrNull { c ->
-            val loc = IntArray(2).also { c.getLocationOnScreen(it) }
-            rawX >= loc[0] && rawX < loc[0] + c.width && rawY >= loc[1] && rawY < loc[1] + c.height
+        // The cell under the finger, or failing that the nearest one within
+        // half a cell, so a finger slightly off target still selects.
+        fun cellAt(rawX: Float, rawY: Float): TextView? {
+            var best: TextView? = null
+            var bestD = Float.MAX_VALUE
+            val loc = IntArray(2)
+            for (c in cells) {
+                c.getLocationOnScreen(loc)
+                val dx = maxOf(loc[0] - rawX, 0f, rawX - (loc[0] + c.width))
+                val dy = maxOf(loc[1] - rawY, 0f, rawY - (loc[1] + c.height))
+                if (dx > c.width / 2f || dy > c.height / 2f) continue
+                val d = dx * dx + dy * dy
+                if (d < bestD) { bestD = d; best = c }
+            }
+            return best
         }
         key.setOnTouchListener { v, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    opened = false; hot = null
+                    opened = false; leftKey = false; hot = null
                     v.isPressed = true
-                    handler.postDelayed(open, ViewConfiguration.getLongPressTimeout().toLong())
+                    handler.postDelayed(open, minOf(ViewConfiguration.getLongPressTimeout(), LONG_PRESS_MS).toLong())
                 }
                 MotionEvent.ACTION_MOVE -> if (opened) {
-                    val c = cellAt(e.rawX, e.rawY)
-                    if (c !== hot) {
-                        hot?.isPressed = false
-                        c?.isPressed = true
-                        hot = c
-                    }
+                    if (e.x < 0 || e.y < 0 || e.x > v.width || e.y > v.height) leftKey = true
+                    setHot(cellAt(e.rawX, e.rawY))
                 }
                 MotionEvent.ACTION_UP -> {
                     v.isPressed = false
@@ -354,13 +380,19 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
                     if (!opened) {
                         tap(key); listener.onText(".")
                     } else {
-                        val c = cellAt(e.rawX, e.rawY)
-                        if (c != null) { listener.onText(c.text.toString()); punctPopup?.dismiss() }
+                        val c = cellAt(e.rawX, e.rawY) ?: hot
+                        setHot(null)
+                        when {
+                            c != null -> { listener.onText(c.text.toString()); punctPopup?.dismiss() }
+                            leftKey -> punctPopup?.dismiss()
+                        }
                     }
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
                     handler.removeCallbacks(open)
+                    setHot(null)
+                    punctPopup?.dismiss()
                 }
             }
             true
@@ -606,6 +638,8 @@ class KeyboardView(context: Context, private val listener: Listener) : LinearLay
 
     companion object {
         const val MAX_SUGGESTIONS = 9
+        /** Hold time before the punctuation panel opens (shorter than most system long-press settings). */
+        private const val LONG_PRESS_MS = 300
         private const val KEY_H = 54
         private const val DOUBLE_TAP_MS = 300L
         private const val REPEAT_DELAY_MS = 400L
