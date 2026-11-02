@@ -255,12 +255,16 @@ class BpeTokenizer(
         private val UNK_NAMES = listOf("<unk>", "<|unk|>", "[UNK]")
 
         /**
-         * GPT-2 pre-tokenizer. UNICODE_CHARACTER_CLASS makes `\s` match Unicode
-         * whitespace, matching the reference implementation.
+         * Unicode White_Space, written out. `\s` means ASCII-only whitespace on
+         * the JVM but Unicode whitespace on Android (ICU), and Android rejects
+         * Pattern.UNICODE_CHARACTER_CLASS. An explicit class behaves the same
+         * on both and matches the reference tokenizer.
          */
+        private const val WS = "\\t\\n\\x0B\\f\\r \\x85\\xA0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000"
+
+        /** GPT-2 pre-tokenizer. */
         val PRETOKENIZE: Pattern = Pattern.compile(
-            "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+",
-            Pattern.UNICODE_CHARACTER_CLASS,
+            "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^$WS\\p{L}\\p{N}]+|[$WS]+(?![^$WS])|[$WS]+",
         )
 
         /** GPT-2 bytes_to_unicode: printable bytes map to themselves, others to U+0100+. */

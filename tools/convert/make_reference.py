@@ -24,6 +24,7 @@ TOKENIZER_CASES = PROMPTS + [
     "don't won't they're I've we'll she'd it's", "numbers 12345 and 3.14159",
     "émojis 🎉🔥 and ünïcödé — dashes", "日本語のテキスト", "URL https://example.com/a?b=c",
     "MiXeD CaSe WoRdS", "punctuation!!! ??? ...", "<|endoftext|>", "a  b   c    d",
+    "no\u00a0break\u3000ideographic\u2003em\u2028line", "trail\u00a0 \u00a0", "x\u0085y\x0bz\x0cw",
 ]
 
 def main(model_dir, out_npz, out_json):

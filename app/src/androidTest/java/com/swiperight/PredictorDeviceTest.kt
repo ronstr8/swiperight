@@ -66,6 +66,21 @@ class PredictorDeviceTest {
         }
     }
 
+    /** Not an assertion: logs suggestions for eyeballing (`adb logcat -s PredictorSamples`). */
+    @Test
+    fun logSamples() {
+        for (s in listOf(
+            "", "I'm going to the ", "Thank you so much for ", "Can we meet at the ",
+            "Let me know if you ", "I'll be there in ", "Happy birthday! Hope you have a ",
+            "What time does the mo", "See you tomor", "Sorry, I can't make it to",
+            "The meeting has been moved to next ", "Do you want to grab ", "Please call me when you get ",
+            "We should probably leave early to avoid the ", "Hello\n", "He said (", "This is the end.",
+        )) {
+            val r = p.predict(s)
+            Log.i("PredictorSamples", "%-48s -> %s (%.1f ms)".format("\"$s\"", r.words, r.inferenceMillis))
+        }
+    }
+
     @Test
     fun latencyUnderBudget() {
         val samples = listOf("I'm going to the ", "Can we meet at the ", "See you tomor", "")
