@@ -184,8 +184,7 @@ must insert a space before the word.
 - No `INTERNET` permission. Typed text is never logged or stored.
 - Predictions (and text reads) are off for password, email, URL, number, phone and
   `NO_SUGGESTIONS` fields.
-- GPT-2 was trained on web text and can suggest offensive words. A shipping keyboard
-  should add a blocklist in `WordCandidates`.
+- GPT-2 was trained on web text and can suggest offensive words.
 
 ## Known limitations
 - **One inference pass per keystroke.** That keeps latency flat, but a multi-token word
