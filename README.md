@@ -34,7 +34,11 @@ text before cursor ─► ContextBuilder ─► BpeTokenizer ─► TFLite Inter
 
 ## Install on your phone
 
-You need a JDK (17+), the Android SDK (Android Studio installs it), `python3` and `curl`.
+**Quickest:** download the APK from
+[Releases](https://github.com/ronstr8/swiperight/releases/latest), open it on the phone,
+and allow installs from that app when asked. Then do steps 3–4 below.
+
+**From source:** you need a JDK (17+), the Android SDK (Android Studio installs it), `python3` and `curl`.
 
 1. Connect the phone. Either plug it in by USB with **USB debugging** on, or use
    **Settings › Developer options › Wireless debugging**, tap **Pair device with
