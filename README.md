@@ -32,22 +32,47 @@ text before cursor ─► ContextBuilder ─► BpeTokenizer ─► TFLite Inter
                                                              NNAPI or CPU)         casing, dedupe)
 ```
 
-## Install on your phone (wireless debugging)
+## Install on your phone
 
-1. On the phone, open **Settings › Developer options › Wireless debugging** and turn it
-   on. Tap **Pair device with pairing code**.
-2. On this machine:
+You need a JDK (17+), the Android SDK (Android Studio installs it), `python3` and `curl`.
+
+1. Connect the phone. Either plug it in by USB with **USB debugging** on, or use
+   **Settings › Developer options › Wireless debugging**, tap **Pair device with
+   pairing code**, and on this machine:
    ```bash
    adb pair <phone-ip>:<pairing-port>      # enter the 6-digit code
    adb connect <phone-ip>:<debug-port>     # the port shown on the Wireless debugging screen
-   ./gradlew installDebug                  # or installRelease (minified, debug-signed)
    ```
    `adb` is at `~/Android/Sdk/platform-tools/adb` if it's not on your PATH.
-3. Open **swiperight** on the phone, tap **Enable keyboard**, then **Switch keyboard**,
-   and type in the test box.
+2. ```bash
+   make run
+   ```
+   This downloads the prebuilt model (61 MB, checked against
+   `assets/model_manifest.json`), builds, installs, and opens the app.
+3. On the phone, tap **Enable keyboard**, then **Switch keyboard**, and type in the
+   test box.
 4. Tap **Run on-device benchmark** for per-backend latency (AUTO / CPU / NNAPI, 1/2/4
    threads), memory, sample predictions and a full hash check of the assets.
-5. Optional on-device tests: `./gradlew connectedDebugAndroidTest`.
+
+## Commands
+
+`make` alone lists these.
+
+| Command | What |
+|---|---|
+| `make run` | Install on the connected phone and open the setup screen |
+| `make install` | Build and install the debug APK |
+| `make build` / `make build-release` | Build the debug APK / the minified, debug-signed release APK |
+| `make test` | Host unit tests |
+| `make device-test` | Instrumented tests on the connected phone |
+| `make lint` | Android lint |
+| `make ci` | Everything that must pass before a commit (test, lint, build) |
+| `make model` | Download the prebuilt model if it's missing |
+| `make model-build` | Rebuild the model from distilgpt2 (see below) |
+| `make model-publish` | Upload the local model to its GitHub release (maintainers) |
+| `make clean` | Remove build outputs (keeps the model) |
+
+With more than one device attached, pick one: `ANDROID_SERIAL=<serial> make run`.
 
 ## Layout
 
@@ -63,6 +88,8 @@ text before cursor ─► ContextBuilder ─► BpeTokenizer ─► TFLite Inter
 | `ime/SwipeRightIme.kt`, `ime/KeyboardView.kt` | The keyboard: threading, commit logic, privacy, memory release |
 | `ui/MainActivity.kt` | Setup + on-device benchmark |
 | `tools/build_model.sh` | Rebuilds all model assets from the Hugging Face checkpoint |
+| `licenses/` | Apache-2.0 text and notice for the distilgpt2-derived model and tokenizer |
+| `tools/fetch_model.sh`, `tools/preflight.sh` | Model download + hash check; build/device checks for `make` |
 | `tools/convert/` | Graph builder, GPTQ/SmoothQuant calibration, int4 packing, verification |
 
 ## Using the predictor
@@ -79,7 +106,7 @@ must insert a space before the word.
 
 ## How the model was built (and why it isn't a stock export)
 
-`tools/build_model.sh` runs the whole pipeline and fails if accuracy drops below a gate.
+`make model-build` (`tools/build_model.sh`) runs the whole pipeline and fails if accuracy drops below a gate.
 
 1. **Graph**: the GPT-2 forward pass is written out by hand in TensorFlow from the HF
    safetensors (`build_tflite.py`). It has fixed shapes, `input_ids[1,16]` right-padded
