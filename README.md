@@ -203,3 +203,8 @@ must insert a space before the word.
   deprecated from Android 15. The choice is measured per device and cached.
 - Model rebuilds need `uv` and about 2 GB of Python wheels. HF parity references need a
   system Python with `torch` and `transformers` (optional; skipped otherwise).
+
+## License
+
+Apache License 2.0 (`LICENSE`). The model and tokenizer are derived from distilgpt2,
+also Apache-2.0; see `licenses/MODEL_NOTICE.md`.

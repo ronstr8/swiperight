@@ -10,6 +10,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `make run` installs the keyboard on a connected phone from a fresh clone: it
   downloads the prebuilt model (hash-checked against the manifest), builds,
   installs and opens the setup screen. `make` lists the other targets.
+- Licensed under Apache-2.0 (`LICENSE`).
 - Model license and notice in `licenses/` (distilgpt2, Apache-2.0).
 
 [Unreleased]: https://github.com/ronstr8/swiperight/commits/main
