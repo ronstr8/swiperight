@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.jpg" alt="swiperight logo" width="240"></p>
+
 # swiperight
 
 An Android keyboard (`InputMethodService`) with **on-device next-word prediction**:
@@ -95,6 +97,7 @@ With more than one device attached, pick one: `ANDROID_SERIAL=<serial> make run`
 | `licenses/` | Apache-2.0 text and notice for the distilgpt2-derived model and tokenizer |
 | `tools/fetch_model.sh`, `tools/preflight.sh` | Model download + hash check; build/device checks for `make` |
 | `tools/convert/` | Graph builder, GPTQ/SmoothQuant calibration, int4 packing, verification |
+| `tools/make_icons.sh` | Regenerates `docs/logo.jpg` from `art/swiperight.jpg` and the launcher icon from `art/ic_launcher_fg.svg` (ImageMagick, Inkscape) |
 
 ## Using the predictor
 

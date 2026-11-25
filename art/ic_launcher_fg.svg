@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Launcher icon foreground: the logo's keyboard and swipe arrow, redrawn
+     without the brain, digits and wordmark so it reads at launcher size.
+     108dp layer at xxxhdpi = 432px; the art stays inside the 66dp (264px)
+     safe circle centred at 216,216. Rendered by tools/make_icons.sh. -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="432" height="432" viewBox="0 0 432 432">
+  <defs>
+    <linearGradient id="neon" x1="110" y1="0" x2="322" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5EEBFF"/>
+      <stop offset="0.55" stop-color="#9C8CFF"/>
+      <stop offset="1" stop-color="#FF5BEA"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="104" y1="276" x2="304" y2="164" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF7BEF" stop-opacity="0"/>
+      <stop offset="0.35" stop-color="#FF8CF0"/>
+      <stop offset="1" stop-color="#7FF3FF"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="bigglow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <path id="star" d="M0,-1 C0.12,-0.12 0.12,-0.12 1,0 C0.12,0.12 0.12,0.12 0,1 C-0.12,0.12 -0.12,0.12 -1,0 C-0.12,-0.12 -0.12,-0.12 0,-1Z"/>
+  </defs>
+
+  <g transform="translate(-6,8)">
+  <!-- keyboard -->
+  <g filter="url(#glow)" stroke="url(#neon)" fill="none">
+    <rect x="112" y="178" width="200" height="130" rx="16" stroke-width="6"/>
+    <g stroke-width="4" fill="url(#neon)" fill-opacity="0.18">
+      <rect x="128" y="192" width="22" height="22" rx="5"/>
+      <rect x="158" y="192" width="22" height="22" rx="5"/>
+      <rect x="188" y="192" width="22" height="22" rx="5"/>
+      <rect x="218" y="192" width="22" height="22" rx="5"/>
+      <rect x="248" y="192" width="22" height="22" rx="5"/>
+      <rect x="278" y="192" width="22" height="22" rx="5"/>
+      <rect x="143" y="222" width="22" height="22" rx="5"/>
+      <rect x="173" y="222" width="22" height="22" rx="5"/>
+      <rect x="203" y="222" width="22" height="22" rx="5"/>
+      <rect x="233" y="222" width="22" height="22" rx="5"/>
+      <rect x="263" y="222" width="22" height="22" rx="5"/>
+      <rect x="128" y="252" width="22" height="22" rx="5"/>
+      <rect x="158" y="252" width="22" height="22" rx="5"/>
+      <rect x="188" y="252" width="22" height="22" rx="5"/>
+      <rect x="218" y="252" width="22" height="22" rx="5"/>
+      <rect x="248" y="252" width="52" height="22" rx="5"/>
+      <rect x="158" y="280" width="112" height="16" rx="5"/>
+    </g>
+  </g>
+
+  <!-- swipe arrow: soft halo, coloured shaft, bright core, head -->
+  <path d="M140,288 C180,296 236,258 300,168" stroke="#E070FF" stroke-width="26"
+        stroke-linecap="round" fill="none" opacity="0.55" filter="url(#bigglow)"/>
+  <path d="M100,268 C150,312 236,258 300,168" stroke="url(#trail)" stroke-width="15"
+        stroke-linecap="round" fill="none" filter="url(#glow)"/>
+  <path d="M120,281 C162,302 236,258 300,168" stroke="#FFFFFF" stroke-opacity="0.85"
+        stroke-width="5" stroke-linecap="round" fill="none"/>
+  <polygon points="319,141 283,155 317,182" fill="#E9FDFF" stroke="#7FF3FF"
+           stroke-width="5" stroke-linejoin="round" filter="url(#glow)"/>
+
+  <!-- sparkles off the arrowhead -->
+  <g fill="#FFFFFF" filter="url(#glow)">
+    <use xlink:href="#star" transform="translate(298,130) scale(14)"/>
+    <use xlink:href="#star" transform="translate(336,168) scale(8)"/>
+    <use xlink:href="#star" transform="translate(276,140) scale(6)"/>
+    <circle cx="318" cy="128" r="2.5"/>
+    <circle cx="334" cy="148" r="2"/>
+  </g>
+  </g>
+</svg>

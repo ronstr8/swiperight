@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- New launcher icon: a glowing keyboard with a swipe arrow and sparkles, after the project logo.
+
 ## [0.1.0] - 2026-11-17
 
 First release.
