@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-25
+
 ### Changed
 - New launcher icon: a glowing keyboard with a swipe arrow and sparkles, after the project logo.
 
@@ -29,5 +31,6 @@ First release.
   installs and opens the setup screen. `make` lists the other targets.
 - Licensed under Apache-2.0 (`LICENSE`); model license and notice in `licenses/`.
 
-[Unreleased]: https://github.com/ronstr8/swiperight/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ronstr8/swiperight/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ronstr8/swiperight/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ronstr8/swiperight/releases/tag/v0.1.0
